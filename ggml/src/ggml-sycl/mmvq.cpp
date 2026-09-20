@@ -3022,7 +3022,12 @@ static void launch_mul_mat_vec_q_reorder_glu_impl(const void * vx, const void * 
                                              ggml_sycl::queue_ptr stream) {
     GGML_ASSERT(ncols % QK_K == 0);
 
-    constexpr size_t num_subgroups = WARP_SIZE;
+    // 8 sub-groups (128 threads) per work group: on Xe2 a 256-thread WG with
+    // SIMD16 fills all 8 XVE thread slots of a single XVE, and with the
+    // register pressure of the fused kernel only ~3 of those slots are
+    // actually resident (VTune occupancy 32.7%). Half-size work groups let
+    // two WGs share one XVE and reduce tail effects.
+    constexpr size_t num_subgroups = WARP_SIZE / 2;
 
     const int            block_num_y = ceil_div(nrows, GGML_SYCL_MMV_Y * (int) num_subgroups * rows_per_sg);
     const sycl::range<3> block_nums(1, 1, block_num_y);
@@ -3061,6 +3066,13 @@ bool ggml_sycl_mul_mat_vec_q_glu_reorder(enum ggml_type src0_type, enum ggml_glu
     if (glu_op != GGML_GLU_OP_SWIGLU && glu_op != GGML_GLU_OP_GEGLU) {
         return false;
     }
+    // The Q4_K GLU-fused MMVQ kernel is occupancy-limited by register
+    // pressure (2 weight sets + shared activations in flight; VTune
+    // occupancy 32.7% on Arc B570). Measured on Qwen3.8-9B Q4_K_M / tg128,
+    // two unfused MMVQ kernels outperform the fused kernel by ~10%
+    // (54.8 vs 50.0 t/s), so the fusion is gated off until the register
+    // pressure is reduced.
+    return false;
 
     using vec_dot = reorder_vec_dot_q_sycl<GGML_TYPE_Q4_K>;
 
