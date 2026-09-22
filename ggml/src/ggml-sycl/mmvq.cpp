@@ -3061,6 +3061,13 @@ bool ggml_sycl_mul_mat_vec_q_glu_reorder(enum ggml_type src0_type, enum ggml_glu
     if (glu_op != GGML_GLU_OP_SWIGLU && glu_op != GGML_GLU_OP_GEGLU) {
         return false;
     }
+    // The Q4_K GLU-fused MMVQ kernel is occupancy-limited by register
+    // pressure: 2 weight sets and the shared activations are in flight at
+    // the same time (VTune occupancy 32.7% on Arc B570). Two unfused MMVQ
+    // kernels measured ~7% faster (50.2 vs 47.1 t/s on Qwen3.8-9B Q4_K_M
+    // tg128), so the fusion is gated off until the register pressure is
+    // reduced. The kernel code is kept for future re-evaluation.
+    return false;
 
     using vec_dot = reorder_vec_dot_q_sycl<GGML_TYPE_Q4_K>;
 
